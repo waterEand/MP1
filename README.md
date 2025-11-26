@@ -1,6 +1,11 @@
-# $\textsf{\color{orange}{M}\color{orange}{P}\textcolor{orange}{1}}$: $\textsf{\color{orange}{M}}\text{eanFlow}$ Tames $\textsf{\color{orange}{P}}\text{olicy}$ Learning in $\textsf{\color{orange}{1}}$-step for Robotic Manipulation
+# $\textsf{\color{orange}{M}\color{orange}{P}\textcolor{orange}{1}}$: $\textsf{\color{orange}{M}}\text{ean}$ Flow Tames $\textsf{\color{orange}{P}}\text{olicy}$ Learning in $\textsf{\color{orange}{1}}$-step for Robotic Manipulation
+<h4 align = "center">Juyi Sheng<sup>*</sup>, Ziyi Wang<sup>*</sup>, Peiming Li, Mengyuan Liu<sup>† </sup>
+<h4 align = "center"> State Key Laboratory of General Artificial Intelligence,
+Peking University, Shenzhen Graduate School, Shenzhen, China</center></h4>
 <h4 align = "center"> 
   <a href="https://mp1-2254.github.io/"><strong>Project Page</strong></a>
+  |
+  <a href="https://arxiv.org/abs/2507.10543"><strong>arXiv</strong></a>
   
 ## Abstract
 In robot manipulation, robot learning is becoming a prevailing approach. However, generative models within this field
@@ -40,7 +45,7 @@ The results are logged by `swanlab or wandb`, so you need to `swanlab login` fir
     This will train an MP/MP1 policy on the `drawer-close` task in Meta-World environment using point cloud modality.
 
 # 🤖 Real-world Deploy
-[R-MP1](https://anonymous.4open.science/r/R-MP1-AAE2/README.md)
+[R-MP1](https://github.com/LogSSim/R-MP1/tree/main#)
 
 # 🏷️ License
 This repository is released under the MIT license.
@@ -49,7 +54,18 @@ This repository is released under the MIT license.
 
 Our code is built upon [3D Diffusion Policy](https://github.com/YanjieZe/3D-Diffusion-Policy), [Flow Policy](https://github.com/zql-kk/FlowPolicy), [Mean Flow](https://github.com/haidog-yaqub/MeanFlow), [Mean Flow official](https://github.com/Gsunshine/meanflow), [VRL3](https://github.com/microsoft/VRL3), and [Metaworld](https://github.com/Farama-Foundation/Metaworld). We would like to thank the authors for their excellent works.
 
-
+# 👍 Citation
+```
+@article{sheng2025mp1meanflowtames,
+      title={MP1: Mean Flow Tames Policy Learning in 1-step for Robotic Manipulation}, 
+      author={Juyi Sheng and Ziyi Wang and Peiming Li and Mengyuan Liu},
+      year={2025},
+      eprint={2507.10543},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2507.10543}, 
+}
+```
 
 
 
