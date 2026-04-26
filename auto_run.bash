@@ -42,7 +42,13 @@ TASKS_DEFAULT=(
   # metaworld_button-press
   # metaworld_button-press-wall
   # metaworld_dial-turn
-  metaworld_door-close
+  # metaworld_door-close
+  # metaworld_peg-insert-side
+  metaworld_reach
+  # metaworld_push
+  # metaworld_pick-place
+  # metaworld_pick-place-wall
+  # metaworld_pick-place-wall
 )
 SEEDS_DEFAULT=(0 1 2)
 
