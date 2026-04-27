@@ -5,3 +5,4 @@ data/
 *.so
 results/
 *.egg-info/
+assets/

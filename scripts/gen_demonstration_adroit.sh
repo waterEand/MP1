@@ -7,7 +7,7 @@ cd third_party/VRL3/src
 task=${1}
 
 CUDA_VISIBLE_DEVICES=0 python gen_demonstration_expert.py --env_name $task \
-                        --num_episodes 20 \
+                        --num_episodes 10 \
                         --root_dir "../../../MP1/data/" \
                         --expert_ckpt_path "../ckpts/vrl3_${task}.pt" \
                         --img_size 84 \

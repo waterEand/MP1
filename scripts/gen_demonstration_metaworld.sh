@@ -8,5 +8,5 @@ task_name=${1}
 
 export CUDA_VISIBLE_DEVICES=0
 python gen_demonstration_expert.py --env_name=${task_name} \
-            --num_episodes 20 \
+            --num_episodes 10 \
             --root_dir "../../MP1/data/" \
