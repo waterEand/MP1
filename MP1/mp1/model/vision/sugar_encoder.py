@@ -11,19 +11,17 @@ class SUGARExtractor(nn.Module):
     """
     Wraps SUGAR's MaskedPCTransformer as a point cloud feature extractor.
 
-    Input : (B, N, 3) XYZ point cloud (any N).
-    Output: (B, out_channels) global feature vector.
+    Two output modes (controlled by `per_token_output`):
+    ─────────────────────────────────────────────────
+    per_token_output=False  (FiLM / global):
+        global max-pool over tokens → MLP projection → (B, out_channels)
 
-    Key design notes
-    ----------------
-    * The checkpoint was pretrained with input_size=6 (XYZ+RGB) and group_size=32.
-      We keep input_size=6 but zero-pad RGB (RGB norms are small vs XYZ in the
-      pretrained weights so this only reduces activation ~3%).
-    * To match the pretrained group_size=32, points are upsampled to
-      `target_npoints` (default 1024) before grouping.  With num_groups=32 and
-      group_size=32 this reproduces exactly the pretraining local-patch scale.
-    * When freeze=True the transformer is kept in eval mode at all times so that
-      BatchNorm and DropPath behave deterministically during policy training.
+    per_token_output=True   (cross-attention / per-token):
+        all tokens → linear projection → (B, num_groups, token_dim)
+        `out_channels` is used as token_dim; `projection_hidden_dim` is ignored.
+        Recommended for use with condition_type: cross_attention in the UNet.
+
+    Input:  (B, N, 3) XYZ point cloud (N ≥ group_size; upsampled to target_npoints internally)
     """
 
     def __init__(
@@ -31,7 +29,7 @@ class SUGARExtractor(nn.Module):
         pretrained_path: str,
         num_groups: int = 32,
         group_size: int = 32,
-        target_npoints: int = 1024,   # upsample input point cloud to this count
+        target_npoints: int = 1024,
         hidden_size: int = 384,
         num_heads: int = 6,
         depth: int = 12,
@@ -40,9 +38,12 @@ class SUGARExtractor(nn.Module):
         finetune_last_n_layers: int = 0,
         out_channels: int = 64,
         projection_hidden_dim: int = 256,
+        per_token_output: bool = False,
     ):
         super().__init__()
         self.target_npoints = target_npoints
+        self.per_token_output = per_token_output
+        self.out_channels = out_channels
 
         self.transformer = MaskedPCTransformer(
             hidden_size=hidden_size,
@@ -66,13 +67,18 @@ class SUGARExtractor(nn.Module):
         else:
             cprint('[SUGARExtractor] Full fine-tuning (freeze=False)', 'cyan')
 
-        self.projection = nn.Sequential(
-            nn.Linear(hidden_size, projection_hidden_dim),
-            nn.GELU(),
-            nn.Linear(projection_hidden_dim, out_channels),
-            nn.LayerNorm(out_channels),
-        )
-        self.out_channels = out_channels
+        if per_token_output:
+            # Lightweight linear projection at token level (like FPVNet: 384 → token_dim)
+            self.projection = nn.Linear(hidden_size, out_channels)
+            cprint(f'[SUGARExtractor] per-token mode: {hidden_size} → {out_channels} per token', 'cyan')
+        else:
+            # Global: max-pool → MLP
+            self.projection = nn.Sequential(
+                nn.Linear(hidden_size, projection_hidden_dim),
+                nn.GELU(),
+                nn.Linear(projection_hidden_dim, out_channels),
+                nn.LayerNorm(out_channels),
+            )
 
     # ── weight loading ───────────────────────────────────────────────────────
 
@@ -91,7 +97,7 @@ class SUGARExtractor(nn.Module):
         for p in self.transformer.parameters():
             p.requires_grad_(False)
         self._frozen = True
-        cprint('[SUGARExtractor] Encoder frozen (transformer will stay in eval mode)', 'cyan')
+        cprint('[SUGARExtractor] Encoder frozen (transformer stays in eval mode)', 'cyan')
 
     def train(self, mode: bool = True):
         super().train(mode)
@@ -112,13 +118,13 @@ class SUGARExtractor(nn.Module):
     def forward(self, xyz: torch.Tensor) -> torch.Tensor:
         """
         xyz: (B, N, 3)
-        returns: (B, out_channels)
+        Returns:
+            per_token_output=False → (B, out_channels)
+            per_token_output=True  → (B, num_groups, out_channels)
         """
         B, N, _ = xyz.shape
 
-        # Upsample to target_npoints so group_size=32 matches pretraining scale.
-        # Training: random sampling with replacement (free data augmentation).
-        # Eval: deterministic tiling to keep inference reproducible.
+        # Upsample: train=random sampling (augmentation), eval=deterministic tiling
         if N < self.target_npoints:
             if self.training:
                 idx = torch.randint(0, N, (B, self.target_npoints), device=xyz.device)
@@ -127,20 +133,34 @@ class SUGARExtractor(nn.Module):
                 repeats = (self.target_npoints + N - 1) // N
                 xyz = xyz.repeat(1, repeats, 1)[:, :self.target_npoints, :]
 
-        # Zero-pad color channels (RGB weight norms are small; ~3% activation impact)
         pc_fts = torch.zeros(B, self.target_npoints, 6, device=xyz.device, dtype=xyz.dtype)
         pc_fts[..., :3] = xyz
 
         outs = self.transformer(pc_fts, mask_pc=False)
-        pc_vis = outs['pc_vis']                  # (B, num_groups, hidden_size)
-        global_feat = pc_vis.max(dim=1).values   # (B, hidden_size)
-        return self.projection(global_feat)       # (B, out_channels)
+        pc_vis = outs['pc_vis']  # (B, num_groups, hidden_size)
+
+        if self.per_token_output:
+            return self.projection(pc_vis)  # (B, num_groups, out_channels)
+        else:
+            global_feat = pc_vis.max(dim=1).values  # (B, hidden_size)
+            return self.projection(global_feat)      # (B, out_channels)
 
 
 class MP1SugarEncoder(nn.Module):
     """
-    Drop-in replacement for MP1Encoder that uses SUGAR as the point cloud backbone.
-    Same interface: forward(observations) -> Tensor, output_shape() -> int.
+    Drop-in replacement for MP1Encoder using SUGAR as the point cloud backbone.
+
+    Two modes, selected by `per_token_output` in `sugar_encoder_cfg`:
+
+    per_token_output=False  (FiLM conditioning, default):
+        Returns flat vector (B, pc_feat + state_feat).
+        output_shape() = scalar int.  Identical interface to MP1Encoder.
+
+    per_token_output=True  (cross-attention conditioning):
+        Returns token sequence (B, num_groups + 1, token_dim).
+        The +1 token encodes the agent state.
+        output_shape() = token_dim (per-token embedding dim).
+        Use with condition_type: cross_attention in the policy.
     """
 
     def __init__(
@@ -160,25 +180,44 @@ class MP1SugarEncoder(nn.Module):
         sugar_encoder_cfg.setdefault('out_channels', out_channel)
 
         self.extractor = SUGARExtractor(**sugar_encoder_cfg)
-        pc_feat_dim = self.extractor.out_channels
+        self.per_token_output = self.extractor.per_token_output
+        token_dim = self.extractor.out_channels
 
         state_dim = observation_space[self.state_key][0]
-        if len(state_mlp_size) == 0:
-            raise ValueError('state_mlp_size must not be empty')
-        net_arch = list(state_mlp_size[:-1])
-        state_out_dim = state_mlp_size[-1]
-        self.state_mlp = nn.Sequential(
-            *create_mlp(state_dim, state_out_dim, net_arch, state_mlp_activation_fn))
 
-        self.n_output_channels = pc_feat_dim + state_out_dim
-        cprint(f'[MP1SugarEncoder] pc_feat={pc_feat_dim}, state_feat={state_out_dim}, '
-               f'total={self.n_output_channels}', 'red')
+        if self.per_token_output:
+            # Per-token mode: state → single token of same dim
+            # MLP: state_dim → token_dim
+            self.state_mlp = nn.Sequential(
+                nn.Linear(state_dim, token_dim),
+                nn.GELU(),
+                nn.Linear(token_dim, token_dim),
+            )
+            self.n_output_channels = token_dim  # per-token dim (for UNet cross-attention)
+            cprint(f'[MP1SugarEncoder] per-token mode: token_dim={token_dim}', 'red')
+        else:
+            # Global mode: state MLP → concat with pc feat
+            if len(state_mlp_size) == 0:
+                raise ValueError('state_mlp_size must not be empty')
+            net_arch = list(state_mlp_size[:-1])
+            state_out_dim = state_mlp_size[-1]
+            self.state_mlp = nn.Sequential(
+                *create_mlp(state_dim, state_out_dim, net_arch, state_mlp_activation_fn))
+            self.n_output_channels = token_dim + state_out_dim
+            cprint(f'[MP1SugarEncoder] global mode: pc={token_dim}, state={state_out_dim}, '
+                   f'total={self.n_output_channels}', 'red')
 
     def forward(self, observations: Dict) -> torch.Tensor:
         xyz = observations[self.point_cloud_key][..., :3]
-        pc_feat = self.extractor(xyz)
-        state_feat = self.state_mlp(observations[self.state_key])
-        return torch.cat([pc_feat, state_feat], dim=-1)
+
+        if self.per_token_output:
+            pc_tokens = self.extractor(xyz)  # (B, G, token_dim)
+            state_tok = self.state_mlp(observations[self.state_key]).unsqueeze(1)  # (B, 1, token_dim)
+            return torch.cat([pc_tokens, state_tok], dim=1)  # (B, G+1, token_dim)
+        else:
+            pc_feat = self.extractor(xyz)
+            state_feat = self.state_mlp(observations[self.state_key])
+            return torch.cat([pc_feat, state_feat], dim=-1)
 
     def output_shape(self) -> int:
         return self.n_output_channels

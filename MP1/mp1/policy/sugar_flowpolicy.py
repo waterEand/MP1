@@ -89,12 +89,13 @@ class SugarFlowPolicy(BasePolicy):
         # ─────────────────────────────────────────────────────────────────────
 
         obs_feature_dim = obs_encoder.output_shape()
+        self.per_token_output = getattr(obs_encoder, 'per_token_output', False)
         input_dim = action_dim + obs_feature_dim
         global_cond_dim = None
         if obs_as_global_cond:
             input_dim = action_dim
             if "cross_attention" in self.condition_type:
-                global_cond_dim = obs_feature_dim
+                global_cond_dim = obs_feature_dim  # token_dim when per_token, else flat feat dim
             else:
                 global_cond_dim = obs_feature_dim * n_obs_steps
 
@@ -166,7 +167,11 @@ class SugarFlowPolicy(BasePolicy):
             this_nobs = dict_apply(nobs, lambda x: x[:, :To, ...].reshape(-1, *x.shape[2:]))
             nobs_features = self.obs_encoder(this_nobs)
             if "cross_attention" in self.condition_type:
-                global_cond = nobs_features.reshape(B, self.n_obs_steps, -1)
+                if self.per_token_output:
+                    # (B*To, G+1, D) → (B, To*(G+1), D)
+                    global_cond = nobs_features.reshape(B, -1, nobs_features.shape[-1])
+                else:
+                    global_cond = nobs_features.reshape(B, self.n_obs_steps, -1)
             else:
                 global_cond = nobs_features.reshape(B, -1)
             cond_data = torch.zeros(size=(B, T, Da), device=device, dtype=dtype)
@@ -238,7 +243,11 @@ class SugarFlowPolicy(BasePolicy):
                 lambda x: x[:, :self.n_obs_steps, ...].reshape(-1, *x.shape[2:]))
             nobs_features = self.obs_encoder(this_nobs)
             if "cross_attention" in self.condition_type:
-                global_cond = nobs_features.reshape(batch_size, self.n_obs_steps, -1)
+                if self.per_token_output:
+                    # (B*To, G+1, D) → (B, To*(G+1), D)
+                    global_cond = nobs_features.reshape(batch_size, -1, nobs_features.shape[-1])
+                else:
+                    global_cond = nobs_features.reshape(batch_size, self.n_obs_steps, -1)
             else:
                 global_cond = nobs_features.reshape(batch_size, -1)
         else:

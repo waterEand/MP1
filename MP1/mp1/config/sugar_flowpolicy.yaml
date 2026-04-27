@@ -23,6 +23,8 @@ policy:
   encoder_output_dim: 64     # output dim of the point cloud extractor
 
   # ── SUGAR encoder (active when encoder_type=sugar) ─────────────────────────
+  # per_token_output=false → global max-pool → FiLM conditioning (condition_type: film)
+  # per_token_output=true  → all tokens → cross-attention (condition_type: cross_attention)
   sugar_encoder_cfg:
     pretrained_path: assets/sugar_objaverse.pt
     num_groups: 32          # FPS centers; 32 groups × 32 pts = 1024 = target_npoints
@@ -36,6 +38,7 @@ policy:
     finetune_last_n_layers: 2
     out_channels: ${policy.encoder_output_dim}
     projection_hidden_dim: 256
+    per_token_output: false  # true → use condition_type: cross_attention_film below
 
   # ── MLP encoder (active when encoder_type=mlp) ─────────────────────────────
   # NOTE: when encoder_type=sugar, RGB is always forwarded if present in the

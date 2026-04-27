@@ -293,7 +293,9 @@ class ConditionalUnet1D(nn.Module):
         timesteps = timesteps.expand(sample.shape[0]).to(sample.device)
         timestep_embed = self.diffusion_step_encoder(timesteps)
         if global_cond is not None:
-            if self.condition_type == 'cross_attention':
+            if global_cond.dim() == 3:
+                # Token sequence conditioning (per-token or multi-step cross-attention):
+                # expand timestep_embed to match sequence length before concat
                 timestep_embed = timestep_embed.unsqueeze(1).expand(-1, global_cond.shape[1], -1)
             global_feature = torch.cat([timestep_embed, global_cond], axis=-1)
 
